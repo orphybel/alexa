@@ -74,7 +74,7 @@ n'existe plus, et qu'il faut normalement supprimer un par un.
 
 ## Compilation
 
-Prérequis : JDK 17, Android SDK (API 34). Puis :
+Prérequis : JDK 17, Android SDK (API 35). Puis :
 
 ```bash
 ./gradlew :core:test           # tests unitaires de la logique métier
