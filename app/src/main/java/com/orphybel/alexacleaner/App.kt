@@ -8,6 +8,7 @@ import android.util.Log
 import com.orphybel.alexacleaner.core.api.AlexaApi
 import com.orphybel.alexacleaner.core.auth.MemoryCookieJar
 import com.orphybel.alexacleaner.core.auth.SessionManager
+import com.orphybel.alexacleaner.core.data.ApiHintsStore
 import com.orphybel.alexacleaner.core.data.HistoryRepository
 import com.orphybel.alexacleaner.core.data.PurgeLogRepository
 import com.orphybel.alexacleaner.core.data.SettingsRepository
@@ -88,7 +89,8 @@ class AppGraph(context: Context) {
     val textStore = FileTextStore(File(context.filesDir, "data"))
     val sessionStore = EncryptedSessionStore(context)
     val sessions = SessionManager(sessionStore, http, cookieJar, logger)
-    val api = AlexaApi(http, sessions, logger)
+    val apiHints = ApiHintsStore(textStore)
+    val api = AlexaApi(http, sessions, logger, apiHints)
     val history = HistoryRepository(textStore)
     val settings = SettingsRepository(textStore)
     val snapshots = SnapshotRepository(textStore)

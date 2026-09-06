@@ -47,6 +47,31 @@ class SettingsRepository(private val store: TextStore) {
     companion object { const val KEY = "settings.json" }
 }
 
+/** Persisted [com.orphybel.alexacleaner.core.api.ApiHints], loaded once and written through. */
+@kotlinx.serialization.Serializable
+private data class ApiHintsData(val graphQlQuery: String? = null, val phoenixRetiredUntil: Long = 0)
+
+class ApiHintsStore(private val store: TextStore) : com.orphybel.alexacleaner.core.api.ApiHints {
+    private var data: ApiHintsData =
+        store.read(KEY)?.let { runCatching { storeJson.decodeFromString<ApiHintsData>(it) }.getOrNull() } ?: ApiHintsData()
+
+    @Synchronized
+    private fun persist() = store.write(KEY, storeJson.encodeToString(data))
+
+    override var graphQlQuery: String?
+        @Synchronized get() = data.graphQlQuery
+        @Synchronized set(value) { data = data.copy(graphQlQuery = value); persist() }
+
+    override var phoenixRetiredUntil: Long
+        @Synchronized get() = data.phoenixRetiredUntil
+        @Synchronized set(value) { data = data.copy(phoenixRetiredUntil = value); persist() }
+
+    @Synchronized
+    fun clear() { data = ApiHintsData(); store.delete(KEY) }
+
+    companion object { const val KEY = "api-hints.json" }
+}
+
 class SnapshotRepository(private val store: TextStore) {
     fun load(): DeviceSnapshot? = store.read(KEY)?.let { runCatching { storeJson.decodeFromString<DeviceSnapshot>(it) }.getOrNull() }
     fun save(s: DeviceSnapshot) = store.write(KEY, storeJson.encodeToString(s))

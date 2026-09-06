@@ -165,6 +165,7 @@ class MainViewModel(private val app: Application) : AndroidViewModel(app) {
     fun logout() {
         g.sessions.logout()
         g.snapshots.clear()
+        g.apiHints.clear()
         Scheduler.syncPeriodicScan(app, 0)
         _state.update {
             it.copy(loggedIn = false, customerName = null, snapshot = null, insights = emptyList(), filtered = emptyList(), selected = emptySet(), screen = Screen.DEVICES)

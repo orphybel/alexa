@@ -47,6 +47,7 @@ class AlexaApi(
     private val http: OkHttpClient,
     private val sessions: SessionManager,
     private val log: Logger = Logger.NONE,
+    private val hints: ApiHints = ApiHints.None,
 ) : DeviceDeleter {
 
     private val baseUrl: HttpUrl get() = sessions.endpoints.alexa
@@ -70,27 +71,45 @@ class AlexaApi(
      */
     suspend fun fetchSmartHome(): List<SmartHomeDevice> {
         var devices: List<SmartHomeDevice>? = null
-        val r = call("GET", "api/phoenix", query = mapOf("includeRelationships" to "true"))
-        if (r.code in 200..299 && r.code != RETIRED_ENDPOINT_CODE && r.body.isNotBlank()) {
-            devices = runCatching { PhoenixParser.parseSmartHome(r.body) }
-                .onFailure { log.log("phoenix: réponse illisible (${r.body.length} octets): ${it.message}") }
-                .getOrNull()
-                ?.takeIf { it.isNotEmpty() }
-        } else {
-            log.log("phoenix: HTTP ${r.code}, ${r.body.length} octets — bascule sur GraphQL")
+        // Skip GET /api/phoenix while it is known retired; re-probe it occasionally in case Amazon
+        // brings it back, so we are not stuck on GraphQL forever.
+        if (System.currentTimeMillis() >= hints.phoenixRetiredUntil) {
+            val r = call("GET", "api/phoenix", query = mapOf("includeRelationships" to "true"))
+            if (r.code in 200..299 && r.code != RETIRED_ENDPOINT_CODE && r.body.isNotBlank()) {
+                devices = runCatching { PhoenixParser.parseSmartHome(r.body) }
+                    .onFailure { log.log("phoenix: réponse illisible (${r.body.length} octets): ${it.message}") }
+                    .getOrNull()
+                    ?.takeIf { it.isNotEmpty() }
+            } else {
+                log.log("phoenix: HTTP ${r.code}, ${r.body.length} octets — bascule sur GraphQL")
+                hints.phoenixRetiredUntil = System.currentTimeMillis() + PHOENIX_REPROBE_MS
+            }
         }
         if (devices == null) devices = fetchSmartHomeGraphQl()
         return resolveReachability(devices)
     }
 
-    /** GraphQL listing, trimming the query until the server accepts it. */
+    /** GraphQL listing, trimming the query until the server accepts it; the winning query is cached. */
     suspend fun fetchSmartHomeGraphQl(): List<SmartHomeDevice> {
+        // Try the query Amazon accepted last time first: one round-trip on the common path.
+        hints.graphQlQuery?.let { cached ->
+            val r = call("POST", "nexus/v1/graphql", body = graphQlBody(cached).toRequestBody(JSON_MEDIA))
+            if (r.code in 200..299 && r.code != RETIRED_ENDPOINT_CODE) {
+                val errors = PhoenixParser.graphQlErrors(r.body)
+                val parsed = runCatching { PhoenixParser.parseGraphQlEndpoints(r.body) }.getOrDefault(emptyList())
+                if (errors.isEmpty() || parsed.isNotEmpty()) {
+                    log.log("GraphQL (requête mémorisée): ${parsed.size} appareils")
+                    return parsed
+                }
+            }
+            log.log("GraphQL: la requête mémorisée n'est plus acceptée, reconstruction")
+            hints.graphQlQuery = null
+        }
         val root = SmartHomeQuery.full()
         var lastError = "?"
         repeat(MAX_GRAPHQL_REPAIRS) { attempt ->
             val query = SmartHomeQuery.render(root)
-            val body = buildJsonObject { put("query", query) }.toString()
-            val r = call("POST", "nexus/v1/graphql", body = body.toRequestBody(JSON_MEDIA))
+            val r = call("POST", "nexus/v1/graphql", body = graphQlBody(query).toRequestBody(JSON_MEDIA))
             if (r.code !in 200..299 || r.code == RETIRED_ENDPOINT_CODE) {
                 throw ApiException("GraphQL /nexus/v1/graphql -> HTTP ${r.code} ${r.body.take(160)}", r.code)
             }
@@ -99,6 +118,7 @@ class AlexaApi(
             if (errors.isEmpty() || parsed.isNotEmpty()) {
                 if (errors.isNotEmpty()) log.log("GraphQL: ${errors.size} erreur(s) ignorée(s), ${parsed.size} appareils")
                 log.log("GraphQL: ${parsed.size} appareils (essai ${attempt + 1}, ${root.leafCount()} champs)")
+                hints.graphQlQuery = query
                 return parsed
             }
             lastError = errors.first()
@@ -123,6 +143,8 @@ class AlexaApi(
         }
         throw ApiException("GraphQL: trop de champs rejetés (${lastError.take(200)})")
     }
+
+    private fun graphQlBody(query: String): String = buildJsonObject { put("query", query) }.toString()
 
     /** Fills in reachability for devices the listing left unknown, in batches. */
     suspend fun resolveReachability(devices: List<SmartHomeDevice>): List<SmartHomeDevice> {
@@ -298,6 +320,7 @@ class AlexaApi(
         const val RETIRED_ENDPOINT_CODE = 299
         private const val MAX_GRAPHQL_REPAIRS = 14
         private const val STATE_BATCH = 40
+        private const val PHOENIX_REPROBE_MS = 7 * 24 * 60 * 60 * 1000L
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
     }
 }

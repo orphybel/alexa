@@ -112,18 +112,44 @@ class GraphQlTest {
     }
 
     @Test
-    fun `state response maps reachability`() {
+    fun `state response maps reachability including not-found ghosts`() {
         val body = """{"deviceStates":[{"entity":{"entityId":"ent-1","entityType":"APPLIANCE"},"capabilityStates":["{\"namespace\":\"Alexa.PowerController\"}"]}],
-          "errors":[{"entity":{"entityId":"ent-2","entityType":"APPLIANCE"},"code":"ENDPOINT_UNREACHABLE","message":"Unable to reach"}]}"""
+          "errors":[
+            {"entity":{"entityId":"ent-2","entityType":"APPLIANCE"},"code":"ENDPOINT_UNREACHABLE","message":"Unable to reach"},
+            {"entity":{"entityId":"ent-3","entityType":"APPLIANCE"},"code":"TargetApplianceNotFoundException","message":"No appliance found for target!"}
+          ]}"""
         val m = PhoenixParser.parseStateReachability(body)
         assertEquals(Reachability.REACHABLE, m["ent-1"])
         assertEquals(Reachability.UNREACHABLE, m["ent-2"])
+        // A listed endpoint that the state API can no longer find is a ghost: treat as offline.
+        assertEquals(Reachability.UNREACHABLE, m["ent-3"])
+    }
+
+    @Test
+    fun `parses network state and driver identity serialized as json strings`() {
+        val body = """
+        {"data":{"endpoints":{"items":[
+          {"endpointId":"e9","friendlyName":"Vieux capteur",
+           "legacyIdentifiers":{"chrsIdentifier":{"entityId":"ent-9"}},
+           "legacyAppliance":{"applianceId":"SKILL_x9","manufacturerName":"Aqara",
+             "applianceNetworkState":"{\"reachability\":\"UNREACHABLE\",\"lastSeenAt\":1699999999000}",
+             "driverIdentity":"{\"namespace\":\"SKILL\",\"identifier\":\"amzn1.ask.skill.99999999-8888-7777-6666-555555555555\"}"}}
+        ]}}}
+        """.trimIndent()
+        val d = PhoenixParser.parseGraphQlEndpoints(body).single()
+        assertEquals(Reachability.UNREACHABLE, d.reachability)
+        assertEquals(1699999999000, d.lastSeenAt)
+        assertEquals("amzn1.ask.skill.99999999-8888-7777-6666-555555555555", d.skillId)
     }
 
     // ------------------------------------------------------------------ end to end against a mock server
 
     private lateinit var server: MockWebServer
     private lateinit var api: AlexaApi
+    private val hints = object : com.orphybel.alexacleaner.core.api.ApiHints {
+        override var graphQlQuery: String? = null
+        override var phoenixRetiredUntil: Long = 0
+    }
 
     private class MemoryStore(var session: AlexaSession?) : SessionStore {
         override fun load() = session
@@ -152,7 +178,7 @@ class GraphQlTest {
             ),
         )
         val sessions = SessionManager(store, http, jar, endpointsFor = { endpoints })
-        api = AlexaApi(http, sessions)
+        api = AlexaApi(http, sessions, hints = hints)
     }
 
     @AfterTest
@@ -169,16 +195,12 @@ class GraphQlTest {
                     path == "/nexus/v1/graphql" -> {
                         val query = Json.parseToJsonElement(request.body.readUtf8()).jsonObject["query"]!!.jsonPrimitive.content
                         assertEquals("CSRF", request.getHeader("csrf"))
-                        when (graphQlCalls.incrementAndGet()) {
-                            1 -> {
-                                assertTrue(query.contains("isEnabled"))
-                                MockResponse().setBody("""{"errors":[{"message":"Validation error (FieldUndefined@[endpoints/items/legacyAppliance/isEnabled]) : Field 'isEnabled' in type 'LegacyAppliance' is undefined"},{"message":"Validation error (FieldUndefined@[endpoints/items/enablement]) : Field 'enablement' in type 'Endpoint' is undefined"}]}""")
-                            }
-                            else -> {
-                                assertFalse(query.contains("isEnabled"))
-                                assertFalse(query.contains("enablement"))
-                                MockResponse().setBody(graphQlBody)
-                            }
+                        graphQlCalls.incrementAndGet()
+                        // Amazon rejects `isEnabled`/`enablement`; every other query is accepted.
+                        if (query.contains("isEnabled") || query.contains("enablement")) {
+                            MockResponse().setBody("""{"errors":[{"message":"Validation error (FieldUndefined@[endpoints/items/legacyAppliance/isEnabled]) : Field 'isEnabled' in type 'LegacyAppliance' is undefined"},{"message":"Validation error (FieldUndefined@[endpoints/items/enablement]) : Field 'enablement' in type 'Endpoint' is undefined"}]}""")
+                        } else {
+                            MockResponse().setBody(graphQlBody)
                         }
                     }
                     path == "/api/phoenix/state" -> {
@@ -198,6 +220,16 @@ class GraphQlTest {
         assertEquals(Reachability.REACHABLE, devices.first { it.applianceId == "SKILL_x1" }.reachability)
         assertEquals(Reachability.UNREACHABLE, devices.first { it.applianceId == "SKILL_x2" }.reachability)
         assertEquals(Reachability.UNKNOWN, devices.first { it.applianceId == "amzn1.alexa.endpoint.3" }.reachability)
+
+        // The winning query and the retired-phoenix fact were remembered.
+        assertTrue(hints.graphQlQuery!!.isNotBlank())
+        assertTrue(hints.phoenixRetiredUntil > System.currentTimeMillis())
+
+        // Next refresh skips GET /api/phoenix and reuses the cached query: a single GraphQL call.
+        graphQlCalls.set(0)
+        val again = api.fetchSmartHome()
+        assertEquals(3, again.size)
+        assertEquals(1, graphQlCalls.get())
     }
 
     @Test

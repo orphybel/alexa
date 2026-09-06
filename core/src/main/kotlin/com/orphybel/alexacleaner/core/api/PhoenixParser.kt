@@ -154,7 +154,7 @@ object PhoenixParser {
             val name = item.str("friendlyName")?.takeIf { it.isNotBlank() }
                 ?: legacy?.str("friendlyName")?.takeIf { it.isNotBlank() }
                 ?: "(sans nom)"
-            val netState = legacy?.get("applianceNetworkState") as? JsonObject
+            val netState = legacy?.obj("applianceNetworkState")
             val reachability = when (netState?.str("reachability")?.uppercase()) {
                 "REACHABLE" -> Reachability.REACHABLE
                 "UNREACHABLE" -> Reachability.UNREACHABLE
@@ -165,7 +165,7 @@ object PhoenixParser {
                 ?.takeIf { it.isNotEmpty() }
                 ?: ((categories?.get("all") as? JsonArray)?.mapNotNull { (it as? JsonObject)?.str("value") }?.takeIf { it.isNotEmpty() })
                 ?: listOfNotNull((categories?.get("primary") as? JsonObject)?.str("value"))
-            val driver = legacy?.get("driverIdentity") as? JsonObject
+            val driver = legacy?.obj("driverIdentity")
             val driverId = driver?.str("identifier")
             val skillId = listOfNotNull(driverId, legacy?.str("connectedVia"), applianceId)
                 .firstNotNullOfOrNull { SKILL_ID.find(it)?.value }
@@ -224,7 +224,13 @@ object PhoenixParser {
             val o = el as? JsonObject ?: return@forEach
             val id = (o["entity"] as? JsonObject)?.str("entityId") ?: return@forEach
             val code = o.str("code") ?: o.str("message") ?: ""
-            result[id] = if (code.contains("UNREACHABLE", true) || code.contains("OFFLINE", true)) Reachability.UNREACHABLE else Reachability.UNKNOWN
+            // ENDPOINT_UNREACHABLE: the device is offline. TargetApplianceNotFoundException: the
+            // endpoint is listed but nothing backs it any more, the very definition of a ghost.
+            result[id] = when {
+                code.contains("UNREACHABLE", true) || code.contains("OFFLINE", true) -> Reachability.UNREACHABLE
+                code.contains("NotFound", true) || code.contains("NOT_FOUND", true) -> Reachability.UNREACHABLE
+                else -> Reachability.UNKNOWN
+            }
         }
         return result
     }
@@ -247,6 +253,15 @@ object PhoenixParser {
     }
 
     private val SKILL_ID = Regex("amzn1\\.ask\\.skill\\.[0-9a-fA-F-]+")
+
+    /** Object-valued field, accepting an object serialized as a JSON string (GraphQL "JSON" scalars). */
+    private fun JsonObject.obj(key: String): JsonObject? = when (val v = this[key]) {
+        is JsonObject -> v
+        is JsonPrimitive -> v.contentOrNull?.trim()?.takeIf { it.startsWith("{") }?.let { s ->
+            runCatching { json.parseToJsonElement(s) as? JsonObject }.getOrNull()
+        }
+        else -> null
+    }
 
     private fun JsonObject.str(key: String): String? = (this[key] as? JsonPrimitive)?.takeIf { it !is JsonNull }?.contentOrNull
     private fun JsonObject.bool(key: String): Boolean? = (this[key] as? JsonPrimitive)?.booleanOrNull
