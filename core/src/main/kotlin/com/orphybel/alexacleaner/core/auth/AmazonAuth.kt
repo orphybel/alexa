@@ -58,12 +58,15 @@ class AmazonAuth(
     val clientId: String = hex("$deviceSerial#$DEVICE_TYPE".toByteArray(Charsets.US_ASCII))
     val codeChallenge: String = base64Url(sha256(codeVerifier.toByteArray(Charsets.US_ASCII)))
 
-    fun signInUrl(): String = endpoints.amazon("ap/signin").newBuilder()
-        .addQueryParameter("openid.return_to", endpoints.amazon("ap/maplanding").toString())
+    /** Host of the sign-in page; the WebView reads its cookies from there after login. */
+    val signInHost: String get() = endpoints.signIn.host
+
+    fun signInUrl(): String = endpoints.signIn("ap/signin").newBuilder()
+        .addQueryParameter("openid.return_to", endpoints.signIn("ap/maplanding").toString())
         .addQueryParameter("openid.oa2.code_challenge_method", "S256")
-        .addQueryParameter("openid.assoc_handle", "amzn_dp_project_dee_ios")
+        .addQueryParameter("openid.assoc_handle", endpoints.signInHandle)
         .addQueryParameter("openid.identity", "http://specs.openid.net/auth/2.0/identifier_select")
-        .addQueryParameter("pageId", "amzn_dp_project_dee_ios")
+        .addQueryParameter("pageId", endpoints.signInHandle)
         .addQueryParameter("accountStatusPolicy", "P1")
         .addQueryParameter("openid.claimed_id", "http://specs.openid.net/auth/2.0/identifier_select")
         .addQueryParameter("openid.mode", "checkid_setup")
@@ -75,7 +78,6 @@ class AmazonAuth(
         .addQueryParameter("openid.ns", "http://specs.openid.net/auth/2.0")
         .addQueryParameter("openid.pape.max_auth_age", "0")
         .addQueryParameter("openid.oa2.response_type", "code")
-        .addQueryParameter("language", region.language.replace('-', '_'))
         .build()
         .toString()
 
@@ -85,7 +87,7 @@ class AmazonAuth(
             putJsonArray("requested_extensions") { add(JsonPrimitive("device_info")); add(JsonPrimitive("customer_info")) }
             putJsonObject("cookies") {
                 putJsonArray("website_cookies") {}
-                put("domain", region.cookieDomain)
+                put("domain", endpoints.signInCookieDomain)
             }
             putJsonObject("registration_data") {
                 put("domain", "Device")
@@ -265,11 +267,27 @@ class AmazonAuth(
         fun create(region: Region, http: OkHttpClient, log: Logger = Logger.NONE, endpoints: Endpoints = Endpoints(region)): AmazonAuth =
             AmazonAuth(region, newDeviceSerial(), newCodeVerifier(), http, log, endpoints)
 
-        /** Returns the authorization code when [url] is the `maplanding` redirect, null otherwise. */
+        private const val CODE_PARAM = "openid.oa2.authorization_code"
+
+        /** True when [url] is the OAuth landing page (with or without a code). */
+        fun isLandingUrl(url: String): Boolean = url.contains("/ap/maplanding") || url.contains(CODE_PARAM)
+
+        /** Returns the authorization code carried by the `maplanding` redirect, null otherwise. */
         fun extractAuthorizationCode(url: String): String? {
-            if (!url.contains("/ap/maplanding")) return null
+            if (!url.contains(CODE_PARAM)) return null
+            val parsed = url.toHttpUrlOrNullSafe()
+            parsed?.queryParameter(CODE_PARAM)?.takeIf { it.isNotBlank() }?.let { return it }
+            // Fallback for odd URLs (code in the fragment, unparseable scheme…).
+            val raw = url.substringAfter("$CODE_PARAM=", "").substringBefore('&').substringBefore('#')
+            return runCatching { java.net.URLDecoder.decode(raw, "UTF-8") }.getOrDefault(raw).takeIf { it.isNotBlank() }
+        }
+
+        /** Error reported by Amazon on the landing page, if any. */
+        fun extractLandingError(url: String): String? {
             val parsed = url.toHttpUrlOrNullSafe() ?: return null
-            return parsed.queryParameter("openid.oa2.authorization_code")?.takeIf { it.isNotBlank() }
+            return parsed.queryParameter("openid.oa2.error_description")
+                ?: parsed.queryParameter("openid.oa2.error")
+                ?: parsed.queryParameter("error")
         }
 
         private fun String.toHttpUrlOrNullSafe(): HttpUrl? = try {

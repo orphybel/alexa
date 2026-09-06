@@ -76,10 +76,39 @@ class AuthAndApiTest {
         assertTrue(url.contains("openid.oa2.response_type=code"))
         assertEquals(32, auth.deviceSerial.length)
         assertNull(AmazonAuth.extractAuthorizationCode("https://www.amazon.fr/ap/signin?foo=bar"))
+        assertNull(AmazonAuth.extractAuthorizationCode("https://www.amazon.fr/ap/maplanding?openid.oa2.error=access_denied"))
+        assertTrue(AmazonAuth.isLandingUrl("https://www.amazon.fr/ap/maplanding?openid.oa2.error=access_denied"))
+        assertEquals("access_denied", AmazonAuth.extractLandingError("https://www.amazon.fr/ap/maplanding?openid.oa2.error=access_denied"))
         assertEquals(
             "ANabc.123",
             AmazonAuth.extractAuthorizationCode("https://www.amazon.fr/ap/maplanding?openid.oa2.authorization_code=ANabc.123&openid.mode=id_res"),
         )
+        assertEquals(
+            "ANx/y",
+            AmazonAuth.extractAuthorizationCode("amzn://landing#openid.oa2.authorization_code=ANx%2Fy&foo=1"),
+        )
+    }
+
+    @Test
+    fun `sign in defaults to amazon com whatever the marketplace`() {
+        val fr = AmazonAuth.create(Region.byTld("fr"), http)
+        assertTrue(fr.signInUrl().startsWith("https://www.amazon.com/ap/signin?"))
+        assertTrue(fr.signInUrl().contains("openid.assoc_handle=amzn_dp_project_dee_ios&"))
+        assertTrue(fr.signInUrl().contains("openid.return_to=https%3A%2F%2Fwww.amazon.com%2Fap%2Fmaplanding"))
+        assertEquals("www.amazon.com", fr.signInHost)
+
+        val frRegional = AmazonAuth.create(Region.byTld("fr"), http, endpoints = Endpoints(Region.byTld("fr"), regionalSignIn = true))
+        assertTrue(frRegional.signInUrl().startsWith("https://www.amazon.fr/ap/signin?"))
+        assertTrue(frRegional.signInUrl().contains("openid.assoc_handle=amzn_dp_project_dee_ios_fr&"))
+        assertEquals(".amazon.fr", Endpoints(Region.byTld("fr"), regionalSignIn = true).signInCookieDomain)
+
+        val jp = Endpoints(Region.byTld("co.jp"))
+        assertEquals("www.amazon.co.jp", jp.signIn.host)
+        assertEquals("amzn_dp_project_dee_ios_jp", jp.signInHandle)
+
+        val uk = Endpoints(Region.byTld("co.uk"), regionalSignIn = true)
+        assertEquals("amzn_dp_project_dee_ios_uk", uk.signInHandle)
+        assertEquals(".amazon.com", Endpoints(Region.byTld("de")).signInCookieDomain)
     }
 
     @Test

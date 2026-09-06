@@ -14,6 +14,7 @@ import com.orphybel.alexacleaner.core.domain.DeviceInsight
 import com.orphybel.alexacleaner.core.domain.FilterState
 import com.orphybel.alexacleaner.core.domain.HistoryDb
 import com.orphybel.alexacleaner.core.domain.PurgeOptions
+import com.orphybel.alexacleaner.core.http.Endpoints
 import com.orphybel.alexacleaner.core.model.DeviceSnapshot
 import com.orphybel.alexacleaner.core.model.Region
 import com.orphybel.alexacleaner.core.model.SmartHomeDevice
@@ -35,7 +36,14 @@ import java.io.File
 enum class Screen { DEVICES, ECHOS, PURGE, LOGS, SETTINGS }
 
 /** Everything needed to resume the login after the WebView returns (survives the activity hop). */
-data class LoginRequest(val region: Region, val deviceSerial: String, val codeVerifier: String, val signInUrl: String)
+data class LoginRequest(
+    val region: Region,
+    val deviceSerial: String,
+    val codeVerifier: String,
+    val signInUrl: String,
+    val signInHost: String,
+    val regionalSignIn: Boolean,
+)
 
 data class UiState(
     val screen: Screen = Screen.DEVICES,
@@ -120,18 +128,21 @@ class MainViewModel(private val app: Application) : AndroidViewModel(app) {
 
     // ---------------------------------------------------------------- login
 
-    fun beginLogin(region: Region): LoginRequest {
-        val auth = AmazonAuth.create(region, g.http, g.logger)
-        return LoginRequest(region, auth.deviceSerial, auth.codeVerifier, auth.signInUrl())
+    fun beginLogin(region: Region, regionalSignIn: Boolean): LoginRequest {
+        val auth = AmazonAuth.create(region, g.http, g.logger, Endpoints(region, regionalSignIn))
+        return LoginRequest(region, auth.deviceSerial, auth.codeVerifier, auth.signInUrl(), auth.signInHost, regionalSignIn)
     }
 
-    fun loginIntent(request: LoginRequest): Intent = LoginActivity.intent(app, request.region, request.signInUrl)
+    fun loginIntent(request: LoginRequest): Intent = LoginActivity.intent(app, request.region, request.signInUrl, request.signInHost)
 
     fun completeLogin(request: LoginRequest, code: String, cookieHeader: String?, frc: String?) {
         _state.update { it.copy(loginInProgress = true, error = null) }
         viewModelScope.launch {
             try {
-                val auth = AmazonAuth(request.region, request.deviceSerial, request.codeVerifier, g.http, g.logger)
+                val auth = AmazonAuth(
+                    request.region, request.deviceSerial, request.codeVerifier, g.http, g.logger,
+                    Endpoints(request.region, request.regionalSignIn),
+                )
                 val session = withContext(Dispatchers.IO) { g.sessions.completeLogin(auth, code, cookieHeader, frc) }
                 _state.update {
                     it.copy(

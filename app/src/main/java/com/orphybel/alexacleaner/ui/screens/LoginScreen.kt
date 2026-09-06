@@ -31,9 +31,10 @@ import androidx.compose.ui.unit.dp
 import com.orphybel.alexacleaner.core.model.Region
 
 @Composable
-fun LoginScreen(modifier: Modifier, defaultRegion: Region, inProgress: Boolean, onLogin: (Region) -> Unit) {
+fun LoginScreen(modifier: Modifier, defaultRegion: Region, inProgress: Boolean, onLogin: (Region, Boolean) -> Unit) {
     var region by remember { mutableStateOf(defaultRegion) }
     var menu by remember { mutableStateOf(false) }
+    var regionalSignIn by remember { mutableStateOf(false) }
 
     Column(
         modifier
@@ -63,6 +64,17 @@ fun LoginScreen(modifier: Modifier, defaultRegion: Region, inProgress: Boolean, 
                 }
             }
         }
+        Spacer(Modifier.height(8.dp))
+        SwitchRow(
+            "Page de connexion sur ${region.amazonHost}",
+            regionalSignIn,
+            description = if (regionalSignIn) {
+                "Mode alternatif : la page de connexion est ouverte sur le domaine régional."
+            } else {
+                "Recommandé : la page de connexion est ouverte sur www.amazon.com (compte global), " +
+                    "puis les cookies ${region.cookieDomain} sont obtenus automatiquement. Activez ce mode seulement si l'autre échoue."
+            },
+        ) { regionalSignIn = it }
         Spacer(Modifier.height(16.dp))
 
         if (inProgress) {
@@ -70,7 +82,7 @@ fun LoginScreen(modifier: Modifier, defaultRegion: Region, inProgress: Boolean, 
             Spacer(Modifier.height(8.dp))
             Text("Enregistrement de la session…", style = MaterialTheme.typography.bodySmall)
         } else {
-            Button(onClick = { onLogin(region) }, modifier = Modifier.fillMaxWidth()) {
+            Button(onClick = { onLogin(region, regionalSignIn) }, modifier = Modifier.fillMaxWidth()) {
                 Text("Se connecter avec Amazon")
             }
         }

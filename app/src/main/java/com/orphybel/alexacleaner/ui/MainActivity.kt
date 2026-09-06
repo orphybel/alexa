@@ -68,15 +68,15 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun startLogin(region: Region) {
-        val request = vm.beginLogin(region)
+    private fun startLogin(region: Region, regionalSignIn: Boolean) {
+        val request = vm.beginLogin(region, regionalSignIn)
         pendingLogin = request
         loginLauncher.launch(vm.loginIntent(request))
     }
 }
 
 @Composable
-fun AppRoot(vm: MainViewModel, onLogin: (Region) -> Unit) {
+fun AppRoot(vm: MainViewModel, onLogin: (Region, Boolean) -> Unit) {
     val state by vm.state.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
 

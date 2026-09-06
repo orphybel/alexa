@@ -19,6 +19,10 @@ n'existe plus, et qu'il faut normalement supprimer un par un.
 - Connexion sur la page officielle Amazon dans une WebView ; le mot de passe n'est jamais lu
   par l'application. Le flux OAuth de l'application Alexa (PKCE + enregistrement d'appareil)
   fournit un *refresh token* stocké chiffré ; les cookies sont renouvelés automatiquement.
+- La page de connexion est ouverte sur `www.amazon.com` quel que soit le marketplace (compte
+  Amazon global, même technique qu'alexa-cookie2), puis les cookies du domaine régional
+  (`.amazon.fr`, …) sont obtenus à partir du refresh token. Un interrupteur permet d'ouvrir
+  la page sur le domaine régional si ce mode échoue.
 
 **Liste des appareils connectés**
 - Statut en ligne / hors ligne / inconnu, source (skill, hub ou fabricant), type, activé ou non.
@@ -100,7 +104,7 @@ app/    Android : WebView de connexion, stockage chiffré, WorkManager (ScanWork
 
 | Usage | Requête |
 |---|---|
-| Connexion | `GET https://www.amazon.<tld>/ap/signin?...openid.oa2.code_challenge=...` puis capture de `/ap/maplanding?openid.oa2.authorization_code=` |
+| Connexion | `GET https://www.amazon.com/ap/signin?...openid.oa2.code_challenge=...` puis capture de `/ap/maplanding?openid.oa2.authorization_code=` |
 | Enregistrement | `POST https://api.amazon.com/auth/register` |
 | Cookies régionaux | `POST https://www.amazon.<tld>/ap/exchangetoken/cookies` |
 | CSRF | `GET https://alexa.amazon.<tld>/api/language` (cookie `csrf`) |
