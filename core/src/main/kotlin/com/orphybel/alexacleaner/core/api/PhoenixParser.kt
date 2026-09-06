@@ -133,6 +133,102 @@ object PhoenixParser {
         return manufacturer ?: fromBridge ?: fromDriver ?: connectedVia?.takeIf { it.isNotBlank() } ?: "Inconnu"
     }
 
+    /** GraphQL validation errors, if the body carries any (`{"errors":[{"message":...}]}`). */
+    fun graphQlErrors(body: String): List<String> = try {
+        val root = json.parseToJsonElement(body).jsonObject
+        (root["errors"] as? JsonArray)?.mapNotNull { (it as? JsonObject)?.str("message") } ?: emptyList()
+    } catch (_: Throwable) {
+        emptyList()
+    }
+
+    /** Parses the `CustomerSmartHome` GraphQL response (`data.endpoints.items`). */
+    fun parseGraphQlEndpoints(body: String): List<SmartHomeDevice> {
+        val root = json.parseToJsonElement(body).jsonObject
+        val items = root["data"]?.jsonObject?.get("endpoints")?.jsonObject?.get("items") as? JsonArray ?: return emptyList()
+        val found = LinkedHashMap<String, SmartHomeDevice>()
+        for (el in items) {
+            val item = el as? JsonObject ?: continue
+            val legacy = item["legacyAppliance"] as? JsonObject
+            val endpointId = item.str("endpointId") ?: item.str("id")
+            val applianceId = legacy?.str("applianceId") ?: endpointId ?: continue
+            val name = item.str("friendlyName")?.takeIf { it.isNotBlank() }
+                ?: legacy?.str("friendlyName")?.takeIf { it.isNotBlank() }
+                ?: "(sans nom)"
+            val netState = legacy?.get("applianceNetworkState") as? JsonObject
+            val reachability = when (netState?.str("reachability")?.uppercase()) {
+                "REACHABLE" -> Reachability.REACHABLE
+                "UNREACHABLE" -> Reachability.UNREACHABLE
+                else -> Reachability.UNKNOWN
+            }
+            val categories = (item["displayCategories"] as? JsonObject)
+            val types = (legacy?.get("applianceTypes") as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+                ?.takeIf { it.isNotEmpty() }
+                ?: ((categories?.get("all") as? JsonArray)?.mapNotNull { (it as? JsonObject)?.str("value") }?.takeIf { it.isNotEmpty() })
+                ?: listOfNotNull((categories?.get("primary") as? JsonObject)?.str("value"))
+            val driver = legacy?.get("driverIdentity") as? JsonObject
+            val driverId = driver?.str("identifier")
+            val skillId = listOfNotNull(driverId, legacy?.str("connectedVia"), applianceId)
+                .firstNotNullOfOrNull { SKILL_ID.find(it)?.value }
+            val manufacturer = legacy?.str("manufacturerName")?.takeIf { it.isNotBlank() }
+            val enabled = legacy?.bool("isEnabled")
+                ?: item.str("enablement")?.let { !it.equals("DISABLED", true) }
+                ?: true
+            val entityId = legacy?.str("entityId")
+                ?: (item["legacyIdentifiers"] as? JsonObject)?.get("chrsIdentifier")?.let { (it as? JsonObject)?.str("entityId") }
+            val capabilities = (legacy?.get("capabilities") as? JsonArray)?.size ?: 0
+            val source = deriveSource(manufacturer, null, driver?.str("namespace"), driverId, legacy?.str("connectedVia"))
+            val device = SmartHomeDevice(
+                applianceId = applianceId,
+                entityId = entityId,
+                friendlyName = name,
+                manufacturerName = manufacturer,
+                friendlyDescription = legacy?.str("friendlyDescription"),
+                modelName = legacy?.str("modelName"),
+                applianceTypes = types,
+                isEnabled = enabled,
+                reachability = reachability,
+                connectedVia = legacy?.str("connectedVia")?.takeIf { it.isNotBlank() },
+                source = source,
+                skillId = skillId,
+                bridgeKey = null,
+                createdAt = netState?.long("createdAt"),
+                lastSeenAt = netState?.long("lastSeenAt"),
+                capabilityCount = capabilities,
+                endpointId = endpointId,
+                raw = item.toString(),
+            )
+            if (!found.containsKey(device.applianceId)) found[device.applianceId] = device
+        }
+        return found.values.toList()
+    }
+
+    /**
+     * Parses `POST /api/phoenix/state` and returns entityId → reachability. Entities listed in
+     * `errors` with `ENDPOINT_UNREACHABLE` are offline; entities with states are online.
+     */
+    fun parseStateReachability(body: String): Map<String, Reachability> {
+        val root = json.parseToJsonElement(body).jsonObject
+        val result = HashMap<String, Reachability>()
+        (root["deviceStates"] as? JsonArray)?.forEach { el ->
+            val o = el as? JsonObject ?: return@forEach
+            val id = (o["entity"] as? JsonObject)?.str("entityId") ?: return@forEach
+            val states = (o["capabilityStates"] as? JsonArray)?.size ?: 0
+            val error = o.str("error") ?: (o["error"] as? JsonObject)?.str("code")
+            result[id] = when {
+                error != null && error.contains("UNREACHABLE", true) -> Reachability.UNREACHABLE
+                states > 0 || error == null -> Reachability.REACHABLE
+                else -> Reachability.UNKNOWN
+            }
+        }
+        (root["errors"] as? JsonArray)?.forEach { el ->
+            val o = el as? JsonObject ?: return@forEach
+            val id = (o["entity"] as? JsonObject)?.str("entityId") ?: return@forEach
+            val code = o.str("code") ?: o.str("message") ?: ""
+            result[id] = if (code.contains("UNREACHABLE", true) || code.contains("OFFLINE", true)) Reachability.UNREACHABLE else Reachability.UNKNOWN
+        }
+        return result
+    }
+
     fun parseEchoDevices(body: String): List<EchoDevice> {
         val root = json.parseToJsonElement(body).jsonObject
         val devices = root["devices"]?.jsonArray ?: return emptyList()

@@ -69,9 +69,11 @@ n'existe plus, et qu'il faut normalement supprimer un par un.
   (« Gérer votre contenu et vos appareils ») ; l'onglet Echo est en lecture seule.
 - **Durée hors ligne** : elle n'est connue qu'à partir des analyses de l'application.
   Au premier lancement, tous les appareils hors ligne apparaissent « hors ligne depuis 0 j ».
-- **Structure de l'API** : le parseur parcourt tout le JSON de `/api/phoenix` sans dépendre
-  d'un chemin exact, mais un changement de format côté Amazon peut casser la liste ou la
-  suppression. Le journal technique aide à diagnostiquer.
+- **Structure de l'API** : Amazon retire progressivement les anciens points (`GET /api/phoenix`
+  répond HTTP 299 avec un corps vide sur les comptes français). L'application bascule alors
+  sur l'API GraphQL de l'application Alexa. Le bouton « Tester les points d'API Amazon »
+  des réglages journalise le code et le début de la réponse de chaque point, y compris la
+  suppression (sur un identifiant inexistant), pour vérifier ce qui fonctionne encore.
 - **Authentification** : Amazon peut demander une vérification (OTP, captcha) dans la
   WebView ; c'est normal. Le flux n'a pas pu être testé contre les serveurs Amazon
   depuis l'environnement de développement : voir « État de la vérification ».
@@ -108,7 +110,8 @@ app/    Android : WebView de connexion, stockage chiffré, WorkManager (ScanWork
 | Enregistrement | `POST https://api.amazon.com/auth/register` |
 | Cookies régionaux | `POST https://www.amazon.<tld>/ap/exchangetoken/cookies` |
 | CSRF | `GET https://alexa.amazon.<tld>/api/language` (cookie `csrf`) |
-| Appareils connectés | `GET https://alexa.amazon.<tld>/api/phoenix` |
+| Appareils connectés | `GET https://alexa.amazon.<tld>/api/phoenix` ; si Amazon répond HTTP 299 (point retiré), repli sur `POST https://alexa.amazon.<tld>/nexus/v1/graphql` (requête `CustomerSmartHome`, élaguée automatiquement si un champ est refusé) |
+| Statut en ligne | `POST https://alexa.amazon.<tld>/api/phoenix/state` (`ENDPOINT_UNREACHABLE` = hors ligne) quand la liste ne le fournit pas |
 | Echo | `GET https://alexa.amazon.<tld>/api/devices-v2/device?cached=false` |
 | Supprimer un appareil | `DELETE https://alexa.amazon.<tld>/api/phoenix/appliance/{applianceId}` |
 | Tout oublier | `DELETE https://alexa.amazon.<tld>/api/phoenix` |
@@ -116,7 +119,7 @@ app/    Android : WebView de connexion, stockage chiffré, WorkManager (ScanWork
 
 ## État de la vérification
 
-- Module `core` : compilé et testé (21 tests : parseur, filtres, historique, règles
+- Module `core` : compilé et testé (28 tests : parseur, filtres, historique, règles
   d'auto-suppression, moteur de purge, flux d'authentification contre un serveur HTTP simulé).
 - Module `app` : compilé par GitHub Actions (aucun SDK Android dans l'environnement de
   développement).

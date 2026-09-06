@@ -159,6 +159,12 @@ fun SettingsScreen(modifier: Modifier, state: UiState, vm: MainViewModel) {
             TextButton(onClick = { showFiles = true }) { Text("Fichiers exportés et sauvegardes (${vm.exportFiles().size})") }
 
             SectionTitle("Diagnostic")
+            Text(
+                "Teste chaque point d'API Amazon utilisé (liste, GraphQL, statut, suppression sur un identifiant inexistant) et " +
+                    "note le code HTTP et le début de la réponse dans le journal technique. Aucun appareil n'est modifié.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            OutlinedButton(onClick = { vm.runDiagnostics(); showDebug = true }, enabled = !state.loading) { Text("Tester les points d'API Amazon") }
             TextButton(onClick = { vm.refreshDebugLog(); showDebug = !showDebug }) { Text(if (showDebug) "Masquer le journal technique" else "Afficher le journal technique") }
             if (showDebug) {
                 Card(Modifier.fillMaxWidth()) {

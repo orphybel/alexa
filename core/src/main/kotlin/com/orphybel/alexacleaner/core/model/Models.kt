@@ -52,6 +52,8 @@ data class SmartHomeDevice(
     val createdAt: Long? = null,
     val lastSeenAt: Long? = null,
     val capabilityCount: Int = 0,
+    /** Identifier used by the GraphQL (Nexus) API, when the device came from there. */
+    val endpointId: String? = null,
     /** Original JSON object, kept for backups and the "raw" view. */
     val raw: String? = null,
 ) {

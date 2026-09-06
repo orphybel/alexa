@@ -335,4 +335,22 @@ class MainViewModel(private val app: Application) : AndroidViewModel(app) {
     }
 
     fun refreshDebugLog() = _state.update { it.copy(debugLog = g.logBuffer.snapshot()) }
+
+    /** Probes every Amazon endpoint the app uses and writes the results to the technical log. */
+    fun runDiagnostics() {
+        _state.update { it.copy(loading = true, message = "Diagnostic en cours…") }
+        viewModelScope.launch {
+            try {
+                val sample = _state.value.snapshot?.smartHome?.firstOrNull { !it.entityId.isNullOrBlank() }?.entityId
+                val lines = withContext(Dispatchers.IO) { g.api.diagnostics(sample) }
+                _state.update {
+                    it.copy(loading = false, debugLog = g.logBuffer.snapshot(), message = "Diagnostic terminé (${lines.size} points testés), voir le journal technique")
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                fail(e)
+            }
+        }
+    }
 }

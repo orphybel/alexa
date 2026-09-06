@@ -190,6 +190,9 @@ class PurgeEngine(
                 if (record.message.contains("Session expirée") && state.abortReason == null) {
                     state.abortReason = "Session Amazon expirée, reconnectez-vous"
                 }
+                if (record.message.contains("point d'API retiré") && state.abortReason == null) {
+                    state.abortReason = "Amazon a retiré ce point d'API de suppression (HTTP 299) ; lancez le diagnostic dans les réglages"
+                }
             } else {
                 state.consecutiveFailures = 0
                 state.adaptiveDelayMs = max(0L, state.adaptiveDelayMs - 250L)
@@ -240,7 +243,7 @@ class PurgeEngine(
                     sleep(wait)
                 }
                 is DeleteOutcome.ServerError, is DeleteOutcome.NetworkError -> {
-                    if (attempt > options.maxRetries) return outcome
+                    if (!outcome.isRetryable || attempt > options.maxRetries) return outcome
                     val wait = backoff(attempt)
                     send(PurgeEvent.Waiting(wait, "${outcome.message} ($label), nouvel essai"))
                     sleep(wait)
